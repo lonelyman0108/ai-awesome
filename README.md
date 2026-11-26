@@ -31,48 +31,28 @@
 
 ### Antigravity CLI (`agy`) 配置
 
-> Windows 上 `agy` 通过 `cmd /c` 执行命令时会对 `command` 内的双引号做参数转义，直接写内联 `node -e "..."` 会触发语法错误。推荐使用本仓库提供的无引号本地 loader（`claudecode/script/statusline-loader.js`），全平台通用且同样支持每 10 分钟自动更新主脚本。
+在 `~/.gemini/antigravity-cli/settings.json` 中加入 `statusLine`（同样零本地文件，每 10 分钟自动拉取更新）。
 
-#### 1. 下载 loader
-
-**macOS / Linux：**
-
-```bash
-curl -fsSL https://raw.githubusercontent.com/lonelyman0108/ai-awesome/main/claudecode/script/statusline-loader.js \
-  -o ~/.gemini/antigravity-cli/statusline.js
-```
-
-**Windows (PowerShell)：**
-
-```powershell
-irm https://raw.githubusercontent.com/lonelyman0108/ai-awesome/main/claudecode/script/statusline-loader.js `
-  -OutFile "$env:USERPROFILE\.gemini\antigravity-cli\statusline.js"
-```
-
-#### 2. 启用配置
-
-在 `~/.gemini/antigravity-cli/settings.json` 中添加（将 `<USER>` 替换为本机用户名，避免使用引号）：
+**macOS / Linux**（与 Claude Code 完全一致）：
 
 ```json
 {
   "statusLine": {
     "type": "command",
-    "command": "node C:/Users/<USER>/.gemini/antigravity-cli/statusline.js",
-    "enabled": true
+    "command": "node -e \"const u='https://raw.githubusercontent.com/lonelyman0108/ai-awesome/main/claudecode/script/statusline.js',fs=require('fs'),f=require('os').tmpdir()+'/cc-statusline.js',go=()=>fs.existsSync(f)&&require(f);let a=1/0;try{a=Date.now()-fs.statSync(f).mtimeMs}catch{}a<6e5?go():fetch(u,{signal:AbortSignal.timeout(3000)}).then(r=>r.ok&&r.text()).then(t=>t&&fs.writeFileSync(f,t)).catch(()=>{try{fs.utimesSync(f,new Date,new Date)}catch{}}).finally(go)\"",
+    "padding": 0
   }
 }
 ```
 
-macOS / Linux 可直接写：
+**Windows**（无双引号、无空格、无 `cmd` 元字符，绕过 Windows 版 `agy` 的 `cmd /c` 引号转义问题）：
 
 ```json
 {
   "statusLine": {
     "type": "command",
-    "command": "node ~/.gemini/antigravity-cli/statusline.js",
-    "enabled": true
+    "command": "node -e u='https://raw.githubusercontent.com/lonelyman0108/ai-awesome/main/claudecode/script/statusline.js';fs=require('fs');f=require('os').tmpdir()+'/cc-statusline.js';go=function(){if(fs.existsSync(f))require(f)};a=1/0;try{a=Date.now()-fs.statSync(f).mtimeMs}catch(e){}Math.floor(Math.max(0,a)/6e5)?fetch(u,{signal:AbortSignal.timeout(3000)}).then(function(r){if(r.ok)return(r.text())}).then(function(t){if(t)fs.writeFileSync(f,t)}).catch(function(){try{n=Date.now()/1e3;fs.utimesSync(f,n,n)}catch(e){}}).finally(go):go()",
+    "padding": 0
   }
 }
 ```
-
-也可以在 `agy` TUI 中直接运行 `/statusline node <loader路径>` 立即热生效。
