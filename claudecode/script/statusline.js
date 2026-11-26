@@ -1,8 +1,8 @@
 #!/usr/bin/env node
-// Claude Code status line (2 lines), cross-platform (Windows / macOS / Linux)
-// 1: model effort | agent | vim | dir | git | PR | session lines & time | cost | cache
-// 2: context bar | rate-limit bars (5h / 7d / per-model like Fable)
-// Per-model limits come from the OAuth usage API, refreshed in a detached background process.
+// Claude Code & Antigravity CLI status line (2 lines), cross-platform (Windows / macOS / Linux)
+// 1: model effort | mode/sandbox | agent | vim | dir | git | PR | session lines & time | cost | cache | tasks
+// 2: context bar | rate-limit / quota bars (CC 5h/7d/per-model, AGY quota buckets)
+// Per-model limits for CC come from the OAuth usage API, refreshed in a detached background process.
 'use strict';
 const fs = require('fs');
 const os = require('os');
@@ -125,9 +125,15 @@ function render(d) {
   let model = (d.model?.display_name || '').replace(/ \(.*context\)/, '');
   if (/\[1m\]/.test(d.model?.id || '')) model += ' 1M';
   const tags = [];
-  if (d.effort?.level) tags.push(d.effort.level);
+  const effort = d.effort?.level || d.model?.effort;
+  if (effort && !model.toLowerCase().endsWith(`(${String(effort).toLowerCase()})`)) tags.push(effort);
   if (d.fast_mode) tags.push('fast');
   if (model) l1.push(C('1;35', model) + (tags.length ? ' ' + C(35, `(${tags.join(',')})`) : ''));
+  if (d.cycle_mode) {
+    const modeCol = { auto: 31, plan: 33, 'accept-edits': 36 }[d.cycle_mode] || 33;
+    l1.push(C(modeCol, d.cycle_mode));
+  }
+  if (d.sandbox?.enabled) l1.push(C(32, 'sandbox'));
   if (d.agent?.name) l1.push(C(34, `@${d.agent.name}`));
   if (d.vim?.mode) l1.push(C('1;33', d.vim.mode));
 
@@ -161,7 +167,8 @@ function render(d) {
     s.push(C(90, t));
   }
   if (s.length) l1.push(s.join(' '));
-  if (c.total_cost_usd != null) l1.push(C(33, `$${Number(c.total_cost_usd).toFixed(2)}`));
+  const costUsd = c.total_cost_usd ?? c.total_usd;
+  if (costUsd != null) l1.push(C(33, `${c.estimated ? '~' : ''}$${Number(costUsd).toFixed(2)}`));
 
   // prompt cache
   const pc = d.prompt_cache;
@@ -175,6 +182,14 @@ function render(d) {
     l1.push(txt);
   }
 
+  // active subagents / background tasks / artifacts (AGY)
+  const act = [];
+  const runningSubs = Array.isArray(d.subagents) ? d.subagents.filter(x => x?.status === 'running').length : 0;
+  if (runningSubs) act.push(C(34, `sub:${runningSubs}`));
+  if (d.task_count) act.push(C(33, `bg:${d.task_count}`));
+  if (d.artifact_count) act.push(C(90, `art:${d.artifact_count}`));
+  if (act.length) l1.push(act.join(' '));
+
   // context
   const cw = d.context_window;
   if (cw && cw.used_percentage != null) {
@@ -185,7 +200,8 @@ function render(d) {
     l2.push(txt);
   }
 
-  // rate limits: stdin gives 5h / 7d; usage API adds scoped ones (Fable etc.).
+  // rate limits (CC) & quota buckets (AGY)
+  // CC: stdin gives 5h / 7d; usage API adds scoped ones (Fable etc.).
   // Only on a subscription (stdin has rate_limits), so third-party providers don't show stale data.
   const limits = [];
   const labels = { five_hour: '5h', seven_day: '7d', spend_limit: 'spend' };
@@ -203,8 +219,22 @@ function render(d) {
       limits.push({ name, pct: l.percent, reset: l.resets_at ? Date.parse(l.resets_at) / 1000 : 0 });
     }
   }
+  if (d.quota && typeof d.quota === 'object') {
+    for (const [k, v] of Object.entries(d.quota)) {
+      if (!v || v.disabled) continue;
+      const name = k.replace(/[_-]+/g, ' ');
+      const reset = v.reset_in_seconds > 0
+        ? now + v.reset_in_seconds
+        : (v.reset_time ? Date.parse(v.reset_time) / 1000 : 0);
+      if (v.remaining_fraction != null) {
+        limits.push({ name, pct: (1 - Number(v.remaining_fraction)) * 100, reset });
+      } else if (v.remaining_amount != null) {
+        limits.push({ name, amount: v.remaining_amount, reset });
+      }
+    }
+  }
   for (const l of limits) {
-    let txt = C(37, `${l.name} `) + bar(l.pct);
+    let txt = C(37, `${l.name} `) + (l.pct != null ? bar(l.pct) : C(36, String(l.amount)));
     const left = l.reset - now;
     if (l.reset && left > 0) txt += C(90, ` (${dur(left)})`);
     l2.push(txt);
